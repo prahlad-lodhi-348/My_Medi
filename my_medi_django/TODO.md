@@ -1,10 +1,10 @@
-# Medication Reminder App Fixes - Progress Tracker
+# Refactor TODO
 
-## Plan Steps:
-- [x] Step 1: Add authentication to AnalyzeMedicineView in api/views.py
-- [x] Step 2: Update Gemini prompt and implement robust JSON parsing with regex extraction in AnalyzeMedicineView
-- [x] Step 3: Enhance AIInsightsView with limited meds context and better prompt
-- [x] Step 4: Test all views (auth, AI responses, JSON validity)
-- [x] Step 5: Complete - attempt_completion
+- [x] Understand current codebase
+- [x] Create api/serializers_phase2.py with all Phase 2 serializers
+- [x] Clean api/views.py to contain only Phase 1 views
+- [x] Create api/views_phase2.py with all Phase 2 views + helpers
+- [x] Update api/urls.py to match required Phase 2 routes
+- [x] Fix IntakeLog STATUS_CHOICES bug in api/models.py
+- [x] Run makemigrations, migrate, runserver
 
-**Current Progress: Starting Step 1**

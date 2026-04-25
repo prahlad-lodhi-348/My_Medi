@@ -1,25 +1,40 @@
 from django.contrib.auth import get_user_model
-from .serializers import ResendVerificationSerializer
+from django.http import HttpResponse
+from django.shortcuts import redirect
+from django.urls import reverse
+from django.conf import settings
+
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.authtoken.models import Token
 from rest_framework.authentication import TokenAuthentication
 from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.parsers import MultiPartParser, FormParser
 from django.contrib.auth import authenticate
-from django.shortcuts import render, redirect
-from .serializers import RegisterSerializer, LoginSerializer, ProfileSerializer, MedicineSerializer
-from .models import User, Medicine, Profile
-from .utils import send_verification_email
-from django.urls import reverse
-from django.conf import settings
+
 import google.generativeai as genai
 import json
-import base64
-from rest_framework.parsers import MultiPartParser, FormParser
-from PIL import Image
 import io
 from urllib.parse import urlencode
+from PIL import Image
+
+from .serializers import (
+    RegisterSerializer, LoginSerializer, ProfileSerializer,
+    MedicineSerializer, ResendVerificationSerializer
+)
+from .models import User, Medicine, Profile
+from .utils import send_verification_email
+from django.shortcuts import render
+
+UserModel = get_user_model()
+
+
+def home(request):
+    if not request.user.is_authenticated:
+        return redirect('/admin/login/')
+    medicines = Medicine.objects.filter(user=request.user)
+    return render(request, 'home.html', {'user': request.user, 'medicines': medicines})
 
 
 class RegisterView(APIView):
@@ -47,6 +62,7 @@ class VerifyEmailView(APIView):
         except User.DoesNotExist:
             return Response({'error': 'Invalid or already used token.'}, status=status.HTTP_400_BAD_REQUEST)
 
+
 class VerifyEmailWebView(APIView):
     permission_classes = [AllowAny]
 
@@ -61,13 +77,11 @@ class VerifyEmailWebView(APIView):
         except User.DoesNotExist:
             success = False
 
-        # अगर आपके पास web frontend URL है तो redirect कर दो
         frontend_base = getattr(settings, "FRONTEND_BASE_URL", "").strip()
         if frontend_base:
             params = urlencode({"verified": "1" if success else "0"})
             return redirect(f"{frontend_base}/signin?{params}")
 
-        # वरना simple HTML page दिखा दो (no frontend)
         if success:
             return HttpResponse(
                 "<h2>Email verified ✅</h2><p>Now you can go back to the app and sign in.</p>",
@@ -79,6 +93,7 @@ class VerifyEmailWebView(APIView):
             status=400,
         )
 
+
 class LoginView(APIView):
     permission_classes = [AllowAny]
 
@@ -89,7 +104,6 @@ class LoginView(APIView):
         email = serializer.validated_data["email"].strip()
         password = serializer.validated_data["password"]
 
-        # Step 1: email se user dhundo
         try:
             user_obj = User.objects.get(email__iexact=email)
         except User.DoesNotExist:
@@ -98,7 +112,6 @@ class LoginView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Step 2: Django authenticate (username chahiye internally)
         user = authenticate(username=user_obj.username, password=password)
         if not user:
             return Response(
@@ -106,14 +119,12 @@ class LoginView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Step 3: Email verified check
         if not user.is_email_verified:
             return Response(
                 {"error": "Email not verified."},
                 status=status.HTTP_403_FORBIDDEN
             )
 
-        # Step 4: Token do
         token, _ = Token.objects.get_or_create(user=user)
         return Response({
             "token": token.key,
@@ -121,7 +132,7 @@ class LoginView(APIView):
             "email": user.email,
             "is_email_verified": True
         }, status=status.HTTP_200_OK)
-    
+
 
 class ProfileView(APIView):
     authentication_classes = [TokenAuthentication]
@@ -131,6 +142,7 @@ class ProfileView(APIView):
         profile, created = Profile.objects.get_or_create(user=request.user)
         serializer = ProfileSerializer(profile)
         return Response(serializer.data)
+
 
 class AnalyzeMedicineView(APIView):
     authentication_classes = [TokenAuthentication]
@@ -154,7 +166,6 @@ class AnalyzeMedicineView(APIView):
 
         def extract_clean_json(text):
             import re
-            # Extract JSON from ```json ... ```
             json_match = re.search(r'```json\s*(\{.*?\})\s*```', text, re.DOTALL)
             if json_match:
                 json_str = json_match.group(1)
@@ -175,6 +186,7 @@ class AnalyzeMedicineView(APIView):
         except ValueError:
             return Response({'error': 'AI analysis failed - invalid JSON format', 'raw': response.text}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
 
+
 class MedicineListCreateView(APIView):
     authentication_classes = [TokenAuthentication]
     permission_classes = [IsAuthenticated]
@@ -192,7 +204,6 @@ class MedicineListCreateView(APIView):
         notes = request.data.get('notes', '')
         image_file = request.FILES.get('image')
 
-        # AI Analysis if image provided
         working_mechanism = 'Information not available'
         side_effects = 'Information not available'
         if image_file:
@@ -217,6 +228,7 @@ class MedicineListCreateView(APIView):
         serializer = MedicineSerializer(medicine)
         return Response(serializer.data, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
 
+
 class ReminderSpeechView(APIView):
     authentication_classes = [TokenAuthentication]
     permission_classes = [IsAuthenticated]
@@ -228,6 +240,7 @@ class ReminderSpeechView(APIView):
             return Response({'speech': message})
         except Medicine.DoesNotExist:
             return Response({'error': 'Medicine not found'}, status=status.HTTP_404_NOT_FOUND)
+
 
 class AIInsightsView(APIView):
     authentication_classes = [TokenAuthentication]
@@ -248,6 +261,7 @@ class AIInsightsView(APIView):
         tip = response.text.strip()
         return Response({'tip': tip})
 
+
 class AIChatView(APIView):
     authentication_classes = [TokenAuthentication]
     permission_classes = [IsAuthenticated]
@@ -256,12 +270,12 @@ class AIChatView(APIView):
         message = request.data.get('message')
         if not message:
             return Response({'error': 'Message is required'}, status=status.HTTP_400_BAD_REQUEST)
-        
+
         genai.configure(api_key=settings.GEMINI_API_KEY)
         model = genai.GenerativeModel('gemini-1.5-flash')
-        
+
         prompt = """\nYou are a helpful medical AI assistant.\nProvide safe, general health guidance.\nDo NOT provide diagnosis.\nSuggest consulting a doctor if symptoms are serious.\n\nUser question: {}""".format(message)
-        
+
         try:
             response = model.generate_content(prompt)
             ai_text = response.text.strip()
@@ -272,29 +286,6 @@ class AIChatView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-
-def register(request):
-    serializer = YourSerializer(data=request.data)
-    
-    if serializer.is_valid():
-        serializer.save()
-        return Response({"msg": "User created"})
-    
-    print(serializer.errors)   # 👈 terminal me error dikhega
-    return Response(serializer.errors, status=400)
-
-
-def home(request):
-    if not request.user.is_authenticated:
-        return redirect('/admin/login/')
-    medicines = Medicine.objects.filter(user=request.user)
-    return render(request, 'home.html', {'user': request.user, 'medicines': medicines})
-
-
-
-
-
-UserModel = get_user_model()
 
 class ResendVerificationView(APIView):
     permission_classes = [AllowAny]
@@ -326,3 +317,4 @@ class LogoutView(APIView):
         if request.auth:
             request.auth.delete()
         return Response({"message": "Logged out successfully."}, status=status.HTTP_200_OK)
+

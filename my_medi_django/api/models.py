@@ -1,6 +1,14 @@
 from django.contrib.auth.models import AbstractUser
 from django.db import models
+from django.core.exceptions import ValidationError
+from decimal import Decimal
 import uuid
+import json
+
+
+def default_days_of_week():
+    return ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
 
 class User(AbstractUser):
     email = models.EmailField(unique = True ) 
@@ -36,6 +44,137 @@ class Medicine(models.Model):
 
     def __str__(self):
         return f"{self.name} - {self.user.username}"
+
+
+# ============ PHASE 2 MODELS ============
+
+class RegimenMedicine(models.Model):
+    FORM_CHOICES = [
+        ('TABLET', 'Tablet'),
+        ('CAPSULE', 'Capsule'),
+        ('SYRUP', 'Syrup'),
+    ]
+    
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    name = models.CharField(max_length=200)
+    form = models.CharField(max_length=10, choices=FORM_CHOICES)
+    strength = models.CharField(max_length=100)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.name} ({self.form}) - {self.user.username}"
+
+
+class Regimen(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    medicine = models.ForeignKey(RegimenMedicine, on_delete=models.CASCADE)
+    start_date = models.DateField()
+    end_date = models.DateField(null=True, blank=True)
+    instructions = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.medicine.name} - {self.user.username}"
+
+
+class DoseTime(models.Model):
+    UNIT_CHOICES = [
+        ('TABLET', 'Tablet'),
+        ('CAPSULE', 'Capsule'),
+        ('ML', 'Milliliter'),
+    ]
+    
+    regimen = models.ForeignKey(Regimen, on_delete=models.CASCADE, related_name='dose_times')
+    time = models.TimeField()
+    label = models.CharField(max_length=100, blank=True, default='')
+    quantity = models.DecimalField(max_digits=5, decimal_places=1)
+    unit = models.CharField(max_length=10, choices=UNIT_CHOICES)
+    days_of_week = models.JSONField(default=default_days_of_week)
+
+    class Meta:
+        ordering = ['time']
+
+    def __str__(self):
+        return f"{self.regimen.medicine.name} @ {self.time} ({self.quantity}{self.unit})"
+
+    def clean(self):
+        medicine_form = self.regimen.medicine.form
+        
+        # SYRUP must use ML
+        if medicine_form == 'SYRUP':
+            if self.unit != 'ML':
+                raise ValidationError(f"SYRUP medicine must use ML, got {self.unit}")
+        
+        # TABLET must use TABLET
+        elif medicine_form == 'TABLET':
+            if self.unit != 'TABLET':
+                raise ValidationError(f"TABLET medicine must use TABLET, got {self.unit}")
+            # Quantity must be in 0.5 steps (0.5, 1, 1.5, 2, etc.)
+            if self.quantity % Decimal('0.5') != 0:
+                raise ValidationError("TABLET quantity must be in 0.5 steps (0.5, 1, 1.5, ...)")
+        
+        # CAPSULE must use CAPSULE
+        elif medicine_form == 'CAPSULE':
+            if self.unit != 'CAPSULE':
+                raise ValidationError(f"CAPSULE medicine must use CAPSULE, got {self.unit}")
+            # Quantity must be integer
+            if self.quantity != self.quantity.to_integral_value():
+                raise ValidationError("CAPSULE quantity must be an integer")
+
+
+class Stock(models.Model):
+    regimen = models.OneToOneField(Regimen, on_delete=models.CASCADE, related_name='stock')
+    current_quantity = models.DecimalField(max_digits=10, decimal_places=2)
+    unit = models.CharField(max_length=10, choices=DoseTime.UNIT_CHOICES)
+    low_stock_threshold_days = models.IntegerField(default=3)
+    reorder_url = models.URLField(blank=True, default='')
+    last_low_stock_seen_at = models.DateTimeField(null=True, blank=True)
+    last_reorder_response = models.CharField(max_length=10, null=True, blank=True)
+    last_reorder_response_at = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return f"Stock for {self.regimen.medicine.name} ({self.current_quantity}{self.unit})"
+
+    def clean(self):
+        medicine_form = self.regimen.medicine.form
+        
+        # Validate unit matches medicine form
+        if medicine_form == 'SYRUP' and self.unit != 'ML':
+            raise ValidationError(f"SYRUP medicine must use ML, got {self.unit}")
+        elif medicine_form == 'TABLET' and self.unit != 'TABLET':
+            raise ValidationError(f"TABLET medicine must use TABLET, got {self.unit}")
+        elif medicine_form == 'CAPSULE' and self.unit != 'CAPSULE':
+            raise ValidationError(f"CAPSULE medicine must use CAPSULE, got {self.unit}")
+
+
+class IntakeLog(models.Model):
+    STATUS_CHOICES = [
+        ('PENDING', 'Pending'),
+        ('TAKEN', 'Taken'),
+        ('SKIPPED', 'Skipped'),
+        ('MISSED', 'Missed'),
+    ]
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    regimen = models.ForeignKey(Regimen, on_delete=models.CASCADE, related_name='intake_logs')
+    dose_time = models.ForeignKey(DoseTime, on_delete=models.CASCADE)
+    date = models.DateField()
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='PENDING')
+    taken_at = models.DateTimeField(null=True, blank=True)
+    quantity = models.DecimalField(max_digits=5, decimal_places=1, null=True, blank=True)
+    unit = models.CharField(max_length=10, choices=DoseTime.UNIT_CHOICES, null=True, blank=True)
+
+    class Meta:
+        unique_together = ('regimen', 'dose_time', 'date')
+        ordering = ['-date', 'dose_time__time']
+
+    def __str__(self):
+        return f"{self.regimen.medicine.name} - {self.date} ({self.status})"
 
 
 

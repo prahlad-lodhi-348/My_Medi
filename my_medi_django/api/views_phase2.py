@@ -45,6 +45,7 @@ class RegimenWizardView(APIView):
 
     def post(self, request):
         """Create a complete regimen with medicine, dose_times, and stock in one transaction."""
+        print("REQUEST DATA :", request.data)
         serializer = RegimenWizardSerializer(
             data=request.data,
             context={'user': request.user}

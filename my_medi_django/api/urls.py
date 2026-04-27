@@ -3,7 +3,7 @@ from . import views
 from .views_phase2 import (
     RegimenWizardView, RegimenListView, RegimenDetailView, RegimenCalendarView,
     IntakeUpsertView, StockStatusView, StockUpdateView, StockRestockView,
-    StockReorderResponseView, LowStockAlertsView
+    StockReorderResponseView, LowStockAlertsView, MedicineInventoryView
 )
 
 app_name = 'api'
@@ -26,16 +26,20 @@ urlpatterns = [
     path('regimens/', RegimenListView.as_view(), name='regimen-list'),
     path('regimens/<int:pk>/', RegimenDetailView.as_view(), name='regimen-detail'),
     path('regimens/<int:regimen_id>/calendar/', RegimenCalendarView.as_view(), name='regimen-calendar'),
-    
+
     # Phase 2 - Intake endpoints
     path('intakes/', IntakeUpsertView.as_view(), name='intakes-upsert'),
-    
+
     # Phase 2 - Stock endpoints
     path('regimens/<int:regimen_id>/stock/status/', StockStatusView.as_view(), name='stock-status'),
     path('regimens/<int:regimen_id>/stock/', StockUpdateView.as_view(), name='stock-update'),
     path('regimens/<int:regimen_id>/stock/restock/', StockRestockView.as_view(), name='stock-restock'),
     path('regimens/<int:regimen_id>/stock/reorder-response/', StockReorderResponseView.as_view(), name='stock-reorder-response'),
-    
+
     # Phase 2 - Alert endpoints
     path('alerts/low-stock/', LowStockAlertsView.as_view(), name='low-stock-alerts'),
+
+    # Phase 2 - Inventory endpoint
+    path('inventory/', MedicineInventoryView.as_view(), name='inventory'),
 ]
+

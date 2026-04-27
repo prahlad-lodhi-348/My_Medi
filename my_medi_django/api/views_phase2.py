@@ -4,14 +4,14 @@ from rest_framework import status
 from rest_framework.authentication import TokenAuthentication
 from rest_framework.permissions import IsAuthenticated
 from django.db import transaction
-from django.db.models import F, OuterRef, Subquery, Case, When, Value, DecimalField, Sum
 from django.utils import timezone
-from datetime import datetime, date, time, timedelta
+from datetime import datetime, date, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
+from math import floor
 
 from .models import (
-    Regimen, RegimenMedicine, DoseTime, Stock, IntakeLog, User
+    Regimen, RegimenMedicine, DoseTime, Stock, IntakeLog
 )
 from .serializers_phase2 import (
     RegimenWizardSerializer, RegimenReadSerializer, RegimenCreateSerializer,
@@ -108,11 +108,18 @@ class RegimenDetailView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     def delete(self, request, pk):
-        """Delete a regimen."""
+        """Delete a regimen and its related dose_times/stock, but not the medicine if still in use."""
         regimen = self.get_regimen(pk, request.user)
         if not regimen:
             return Response({'detail': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        medicine = regimen.medicine
         regimen.delete()
+
+        # Delete medicine only if no other regimens use it
+        if not Regimen.objects.filter(medicine=medicine).exists():
+            medicine.delete()
+
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -197,14 +204,23 @@ class IntakeUpsertView(APIView):
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        regimen_id = serializer.validated_data.get('regimen').id
-        dose_time_id = serializer.validated_data.get('dose_time').id
-        intake_date = serializer.validated_data.get('date')
+        regimen = serializer.validated_data.get('regimen')
+        dose_time = serializer.validated_data.get('dose_time')
+
+        # Security: ensure regimen belongs to user
+        if regimen.user != request.user:
+            return Response({'detail': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Validate dose_time belongs to regimen
+        if dose_time.regimen != regimen:
+            return Response({'detail': 'Invalid dose_time'}, status=status.HTTP_400_BAD_REQUEST)
+
         new_status = serializer.validated_data.get('status')
+        intake_date = serializer.validated_data.get('date')
 
         intake_log, created = IntakeLog.objects.select_for_update().get_or_create(
-            regimen_id=regimen_id,
-            dose_time_id=dose_time_id,
+            regimen=regimen,
+            dose_time=dose_time,
             date=intake_date,
             user=request.user,
             defaults={
@@ -215,37 +231,24 @@ class IntakeUpsertView(APIView):
             }
         )
 
+        old_status = None
         if not created:
             old_status = intake_log.status
             intake_log.status = new_status
             intake_log.taken_at = timezone.now() if new_status == 'TAKEN' else None
-            intake_log.quantity = serializer.validated_data.get('quantity') or intake_log.quantity
-            intake_log.unit = serializer.validated_data.get('unit') or intake_log.unit
             intake_log.save()
-        else:
-            old_status = None
 
-        try:
-            stock = Stock.objects.select_for_update().get(regimen_id=regimen_id)
-        except Stock.DoesNotExist:
-            return Response(
-                {'detail': 'Stock not found for regimen'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        dose_time = DoseTime.objects.get(id=dose_time_id)
+        stock = Stock.objects.select_for_update().get(regimen=regimen)
         quantity_change = dose_time.quantity
 
-        if created or old_status != new_status:
-            if new_status == 'TAKEN':
-                if stock.current_quantity < quantity_change:
-                    return Response(
-                        {'detail': 'INSUFFICIENT_STOCK'},
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
-                stock.current_quantity -= quantity_change
-            elif old_status == 'TAKEN' and new_status == 'SKIPPED':
-                stock.current_quantity += quantity_change
+        # Clean stock logic
+        if new_status == 'TAKEN' and old_status != 'TAKEN':
+            if stock.current_quantity < quantity_change:
+                return Response({'detail': 'INSUFFICIENT_STOCK'}, status=status.HTTP_400_BAD_REQUEST)
+            stock.current_quantity -= quantity_change
+
+        elif old_status == 'TAKEN' and new_status != 'TAKEN':
+            stock.current_quantity += quantity_change
 
         stock.save()
 
@@ -266,17 +269,22 @@ class StockStatusView(APIView):
             return Response({'detail': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
 
         avg_daily = compute_avg_daily_required(regimen)
-        days_remaining = Decimal('0')
+
+        estimated_out = None
         if avg_daily > 0:
             days_remaining = stock.current_quantity / avg_daily
+            estimated_out = date.today() + timedelta(days=int(floor(float(days_remaining))))
+        else:
+            days_remaining = Decimal('0')
 
         return Response({
             'current_quantity': str(stock.current_quantity),
             'unit': stock.unit,
-            'low_stock_threshold_days': stock.low_stock_threshold_days,
             'avg_daily_required': str(avg_daily),
             'days_remaining': str(days_remaining),
+            'estimated_out_of_stock_date': estimated_out.isoformat() if estimated_out else None,
             'is_low_stock': days_remaining <= stock.low_stock_threshold_days,
+            'low_stock_threshold_days': stock.low_stock_threshold_days,
             'reorder_url': stock.reorder_url,
             'last_low_stock_seen_at': stock.last_low_stock_seen_at,
             'last_reorder_response': stock.last_reorder_response,
@@ -368,12 +376,17 @@ class LowStockAlertsView(APIView):
                 if avg_daily > 0:
                     days_remaining = stock.current_quantity / avg_daily
                     if days_remaining <= stock.low_stock_threshold_days:
+                        estimated_out = date.today() + timedelta(
+                            days=int(floor(float(days_remaining)))
+                        )
                         low_stock_regimens.append({
                             'regimen_id': regimen.id,
                             'medicine_name': regimen.medicine.name,
                             'current_quantity': str(stock.current_quantity),
                             'unit': stock.unit,
+                            'avg_daily_required': str(avg_daily),
                             'days_remaining': str(days_remaining),
+                            'estimated_out_of_stock_date': estimated_out.isoformat(),
                             'low_stock_threshold_days': stock.low_stock_threshold_days,
                             'reorder_url': stock.reorder_url,
                         })
@@ -381,4 +394,64 @@ class LowStockAlertsView(APIView):
                 pass
 
         return Response(low_stock_regimens)
+
+
+class MedicineInventoryView(APIView):
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        """Get aggregated inventory for all medicines across regimens."""
+        medicines = RegimenMedicine.objects.filter(user=request.user)
+
+        data = []
+
+        for medicine in medicines:
+            regimens = Regimen.objects.filter(
+                user=request.user,
+                medicine=medicine
+            )
+
+            total_stock = Decimal('0')
+            total_avg_daily = Decimal('0')
+            is_low_stock = False
+
+            for regimen in regimens:
+                try:
+                    stock = Stock.objects.get(regimen=regimen)
+                    total_stock += stock.current_quantity
+
+                    avg = compute_avg_daily_required(regimen)
+                    total_avg_daily += avg
+
+                    if avg > 0:
+                        days_rem = stock.current_quantity / avg
+                        if days_rem <= stock.low_stock_threshold_days:
+                            is_low_stock = True
+
+                except Stock.DoesNotExist:
+                    continue
+
+            if total_avg_daily > 0:
+                days_remaining = total_stock / total_avg_daily
+                estimated_out = date.today() + timedelta(
+                    days=int(floor(float(days_remaining)))
+                )
+            else:
+                days_remaining = Decimal('0')
+                estimated_out = None
+
+            data.append({
+                'medicine_id': medicine.id,
+                'name': medicine.name,
+                'form': medicine.form,
+                'strength': medicine.strength,
+                'total_stock': str(total_stock),
+                'avg_daily_required': str(total_avg_daily),
+                'days_remaining': str(days_remaining),
+                'estimated_out_of_stock_date': estimated_out.isoformat() if estimated_out else None,
+                'is_low_stock': is_low_stock,
+            })
+
+        return Response(data)
 

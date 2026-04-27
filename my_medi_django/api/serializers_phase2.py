@@ -12,7 +12,11 @@ from .models import (
 class RegimenMedicineCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = RegimenMedicine
-        fields = ['name', 'form', 'strength', 'notes']
+        fields = [
+            'name', 'form', 'strength',
+            'brand', 'description', 'image',
+            'notes',
+        ]
 
 
 class DoseTimeCreateSerializer(serializers.ModelSerializer):
@@ -36,7 +40,11 @@ class RegimenCreateSerializer(serializers.ModelSerializer):
 class RegimenMedicineReadSerializer(serializers.ModelSerializer):
     class Meta:
         model = RegimenMedicine
-        fields = ['id', 'name', 'form', 'strength', 'notes', 'created_at']
+        fields = [
+            'id', 'name', 'form', 'strength',
+            'brand', 'description', 'image',
+            'notes', 'created_at',
+        ]
 
 
 class DoseTimeReadSerializer(serializers.ModelSerializer):
@@ -115,7 +123,20 @@ class RegimenWizardSerializer(serializers.Serializer):
         dose_times_data = validated_data.pop('dose_times')
         stock_data = validated_data.pop('stock')
 
-        medicine = RegimenMedicine.objects.create(user=user, **medicine_data)
+        name = medicine_data.pop('name')
+
+        medicine = RegimenMedicine.objects.filter(
+            user=user,
+            name__iexact=name
+        ).first()
+
+        if not medicine:
+            medicine = RegimenMedicine.objects.create(
+                user=user,
+                name=name,
+                **medicine_data
+            )
+
         regimen = Regimen.objects.create(user=user, medicine=medicine, **validated_data)
 
         for dt_data in dose_times_data:

@@ -4,7 +4,8 @@ from .views_phase2 import (
     RegimenWizardView, RegimenListView, RegimenDetailView, RegimenCalendarView,
     IntakeUpsertView, StockStatusView, StockUpdateView, StockRestockView,
     StockReorderResponseView, LowStockAlertsView, MedicineInventoryView,
-    CaregiverListCreateView, CaregiverDeleteView
+    CaregiverListCreateView, CaregiverDeleteView,
+    register_caregiver_push_token, notification_log_view, trigger_weekly_report
 )
 
 app_name = 'api'
@@ -47,5 +48,8 @@ urlpatterns = [
     # Phase 2 - Caregiver endpoints
     path('caregivers/', CaregiverListCreateView.as_view(), name='caregiver-list-create'),
     path('caregivers/<int:pk>/', CaregiverDeleteView.as_view(), name='caregiver-delete'),
+    path('caregivers/<int:pk>/register-token/', register_caregiver_push_token, name='register-caregiver-token'),
+    path('notifications/log/', notification_log_view, name='notification-log'),
+    path('caregivers/send-weekly-report/', trigger_weekly_report, name='send-weekly-report'),
 ]
 

@@ -7,9 +7,8 @@ from .models import (
     Stock,
     IntakeLog,
     Caregiver,
+    NotificationLog
 )
-
-
 class RegimenMedicineCreateSerializer(serializers.ModelSerializer):
     form = serializers.CharField(required=False, allow_blank=True, default='TABLET')
     strength = serializers.CharField(required=False, allow_blank=True, default='Not specified')
@@ -119,15 +118,7 @@ class StockReorderResponseSerializer(serializers.Serializer):
     ordered = serializers.BooleanField()
 
 
-class CaregiverSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Caregiver
-        fields = [
-            'id', 'patient', 'name', 'phone', 'relationship',
-            'notify_on_missed', 'notify_on_low_stock',
-            'is_active', 'created_at',
-        ]
-        read_only_fields = ['id', 'patient', 'created_at']
+
 
 
 class RegimenWizardSerializer(serializers.Serializer):
@@ -171,4 +162,56 @@ class RegimenWizardSerializer(serializers.Serializer):
         Stock.objects.create(regimen=regimen, **stock_data)
 
         return regimen
+
+
+# notificatiom caregiver 
+
+
+class CaregiverSerializer(serializers.ModelSerializer):
+    """
+    Caregiver create/update/list.
+    expo_push_token React Native se aayega — patient app mein
+    caregiver apna token register karega.
+    """
+    class Meta:
+        model = Caregiver
+        fields = [
+            'id', 'name', 'phone', 'email',
+            'relationship', 'notify_on_missed',
+            'notify_on_low_stock', 'expo_push_token',
+            'is_active', 'created_at',
+        ]
+        read_only_fields = ['id', 'created_at']
+ 
+    def validate_phone(self, value):
+        # Basic phone validation
+        cleaned = value.replace('+', '').replace('-', '').replace(' ', '')
+        if not cleaned.isdigit():
+            raise serializers.ValidationError("Phone number sirf digits hona chahiye.")
+        if len(cleaned) < 10:
+            raise serializers.ValidationError("Phone number kam se kam 10 digits ka hona chahiye.")
+        return value
+ 
+ 
+class NotificationLogSerializer(serializers.ModelSerializer):
+    medicine_name = serializers.SerializerMethodField()
+    caregiver_name = serializers.SerializerMethodField()
+ 
+    class Meta:
+        model = NotificationLog
+        fields = [
+            'id', 'notification_type', 'channel', 'status',
+            'title', 'body', 'sent_at', 'medicine_name',
+            'caregiver_name', 'error_message',
+        ]
+ 
+    def get_medicine_name(self, obj):
+        if obj.intake_log:
+            return obj.intake_log.regimen.medicine.name
+        return None
+ 
+    def get_caregiver_name(self, obj):
+        return obj.caregiver.name if obj.caregiver else None
+ 
+
 

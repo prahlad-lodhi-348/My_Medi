@@ -30,7 +30,7 @@ DEBUG = True
 
 CORS_ALLOW_ALL_ORIGINS = True
 # 
-ALLOWED_HOSTS = ['127.0.0.1', 'localhost', '192.168.1.6','*',' 192.168.1.5']
+ALLOWED_HOSTS = ['127.0.0.1', 'localhost','*',' 192.168.1.5']
 
 
 
@@ -94,7 +94,28 @@ DATABASES = {
         'PORT': '5432',               # Default PostgreSQL port
     }
 }
+# clery 
+# Celery
+CELERY_BROKER_URL        = 'redis://localhost:6379/0'
+CELERY_RESULT_BACKEND    = 'redis://localhost:6379/0'
+CELERY_ACCEPT_CONTENT    = ['json']
+CELERY_TASK_SERIALIZER   = 'json'
+CELERY_TIMEZONE          = 'Asia/Kolkata'
 
+from celery.schedules import crontab
+CELERY_BEAT_SCHEDULE = {
+    'check-missed-doses': {
+        'task': 'api.tasks.check_missed_doses',
+        'schedule': crontab(minute='*/30'),
+    },
+    'weekly-caregiver-report': {
+        'task': 'api.tasks.send_weekly_caregiver_report',
+        'schedule': crontab(hour=20, minute=0, day_of_week='sunday'),
+    },
+}
+
+# INSTALLED_APPS mein add karo:
+# 'django_celery_beat',
 
 # Password validation
 # https://docs.djangoproject.com/en/6.0/ref/settings/#auth-password-validators

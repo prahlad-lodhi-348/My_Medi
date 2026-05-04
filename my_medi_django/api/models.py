@@ -48,6 +48,8 @@ class Caregiver(models.Model):
     notify_on_low_stock = models.BooleanField(default=True)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    email = models.EmailField(blank=True, null=True)
+    expo_push_token = models.CharField(max_length=200, blank=True, null=True)
 
     class Meta:
         unique_together = ("patient", "phone")
@@ -211,4 +213,67 @@ class IntakeLog(models.Model):
         return f"{self.regimen.medicine.name} - {self.date} ({self.status})"
 
 
+
+
+#  this is phase 3 related code notification  
+
+
+class NotificationLog(models.Model):
+    NOTIFICATION_TYPE_CHOICES = [
+        ('MISSED_DOSE', 'Missed Dose'),
+        ('LOW_STOCK', 'Low Stock'),
+        ('WEEKLY_REPORT', 'Weekly Report'),
+        ('DOSE_REMINDER', 'Dose Reminder'),
+    ]
+    CHANNEL_CHOICES = [
+        ('PUSH', 'Push Notification'),
+        ('EMAIL', 'Email'),
+    ]
+    STATUS_CHOICES = [
+        ('SENT', 'Sent'),
+        ('FAILED', 'Failed'),
+        ('PENDING', 'Pending'),
+    ]
+ 
+    # Kis patient ke liye (regarding )
+    patient = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='notification_logs'
+    )
+    # Kaun receive karega (caregiver ya patient khud)
+    caregiver = models.ForeignKey(
+        'Caregiver',
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='notification_logs'
+    )
+    notification_type = models.CharField(max_length=20, choices=NOTIFICATION_TYPE_CHOICES)
+    channel = models.CharField(max_length=10, choices=CHANNEL_CHOICES)
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='PENDING')
+ 
+    # Kya message gaya
+    title = models.CharField(max_length=200)
+    body = models.TextField()
+ 
+    # Related dose (optional — missed dose ke liye)
+    intake_log = models.ForeignKey(
+        'IntakeLog',
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='notifications'
+    )
+ 
+    sent_at = models.DateTimeField(auto_now_add=True)
+    error_message = models.TextField(blank=True, null=True)
+ 
+    class Meta:
+        ordering = ['-sent_at']
+        indexes = [
+            models.Index(fields=['patient', 'notification_type']),
+            models.Index(fields=['caregiver', 'sent_at']),
+        ]
+ 
+    def __str__(self):
+        return f"{self.notification_type} → {self.caregiver or self.patient} [{self.status}]"
 

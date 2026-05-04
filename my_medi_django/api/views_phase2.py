@@ -9,17 +9,31 @@ from datetime import datetime, date, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 from math import floor
+from rest_framework import generics, status
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from django.shortcuts import get_object_or_404
+
+from rest_framework import generics
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework import status
+from django.shortcuts import get_object_or_404
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.authentication import TokenAuthentication
+from rest_framework.permissions import IsAuthenticated
 
 from .models import (
-    Regimen, RegimenMedicine, DoseTime, Stock, IntakeLog, Caregiver
+    Regimen, RegimenMedicine, DoseTime, Stock, IntakeLog, Caregiver, NotificationLog
 )
 from .serializers_phase2 import (
     RegimenWizardSerializer, RegimenReadSerializer, RegimenCreateSerializer,
     IntakeUpsertSerializer, StockPatchSerializer, StockRestockSerializer,
-    StockReorderResponseSerializer, CaregiverSerializer
+    StockReorderResponseSerializer, CaregiverSerializer, NotificationLogSerializer
 )
 from .timezone_utils import get_request_tz
-
+from .tasks import send_weekly_caregiver_report
 
 def compute_avg_daily_required(regimen):
     """
@@ -456,25 +470,6 @@ class MedicineInventoryView(APIView):
         return Response(data)
 
 
-class CaregiverListCreateView(APIView):
-    authentication_classes = [TokenAuthentication]
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request):
-        """List all caregivers for the authenticated patient."""
-        caregivers = Caregiver.objects.filter(patient=request.user)
-        serializer = CaregiverSerializer(caregivers, many=True)
-        return Response(serializer.data)
-
-    def post(self, request):
-        """Create a new caregiver for the authenticated patient."""
-        serializer = CaregiverSerializer(data=request.data)
-        if serializer.is_valid():
-            serializer.save(patient=request.user)
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-
 class CaregiverDeleteView(APIView):
     authentication_classes = [TokenAuthentication]
     permission_classes = [IsAuthenticated]
@@ -488,3 +483,135 @@ class CaregiverDeleteView(APIView):
 
         caregiver.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# Phase 3 Caregiver/Notification endpoints
+
+
+class CaregiverListCreateView(generics.ListCreateAPIView):
+    """
+    GET  /api/caregivers/         — apne caregivers list karo
+    POST /api/caregivers/         — naya caregiver add karo
+    """
+    serializer_class = CaregiverSerializer
+    permission_classes = [IsAuthenticated]
+ 
+    def get_queryset(self):
+        return Caregiver.objects.filter(
+            patient=self.request.user,
+            is_active=True,
+        ).order_by('-created_at')
+ 
+    def perform_create(self, serializer):
+        serializer.save(patient=self.request.user)
+ 
+ 
+class CaregiverDetailView(generics.RetrieveUpdateDestroyAPIView):
+    """
+    GET    /api/caregivers/<id>/   — detail
+    PATCH  /api/caregivers/<id>/   — update (token update bhi yahan se)
+    DELETE /api/caregivers/<id>/   — soft delete (is_active=False)
+    """
+    serializer_class = CaregiverSerializer
+    permission_classes = [IsAuthenticated]
+ 
+    def get_queryset(self):
+        return Caregiver.objects.filter(patient=self.request.user)
+ 
+    def perform_destroy(self, instance):
+        # Hard delete nahi, soft delete
+        instance.is_active = False
+        instance.save(update_fields=['is_active'])
+ 
+ 
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def register_caregiver_push_token(request, caregiver_id):
+    """
+    POST /api/caregivers/<id>/register-token/
+    
+    React Native se caregiver ka Expo Push Token register karo.
+    Body: { "expo_push_token": "ExponentPushToken[xxxxxx]" }
+    
+    NOTE: Caregiver ke paas apna phone hoga jismein app install hai.
+    Patient yeh endpoint call karega apne caregiver ke liye.
+    """
+    caregiver = get_object_or_404(
+        Caregiver,
+        id=caregiver_id,
+        patient=request.user,
+        is_active=True,
+    )
+    token = request.data.get('expo_push_token', '').strip()
+ 
+    if not token:
+        return Response(
+            {'error': 'expo_push_token required hai.'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    if not token.startswith('ExponentPushToken['):
+        return Response(
+            {'error': 'Invalid Expo push token format.'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+ 
+    caregiver.expo_push_token = token
+    caregiver.save(update_fields=['expo_push_token'])
+ 
+    return Response({'message': 'Token registered successfully.'})
+ 
+ 
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def notification_log_view(request):
+    """
+    GET /api/notifications/log/
+    
+    Patient ke apne sabhi notifications ka audit trail.
+    Query params:
+      ?type=MISSED_DOSE  — filter by type
+      ?limit=20          — pagination
+    """
+    qs = NotificationLog.objects.filter(
+        patient=request.user
+    ).select_related('caregiver', 'intake_log__regimen__medicine')
+ 
+    notif_type = request.query_params.get('type')
+    if notif_type:
+        qs = qs.filter(notification_type=notif_type)
+ 
+    limit = int(request.query_params.get('limit', 20))
+    qs = qs[:limit]
+ 
+    serializer = NotificationLogSerializer(qs, many=True)
+    return Response(serializer.data)
+ 
+ 
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def trigger_weekly_report(request):
+    """
+    POST /api/caregivers/send-weekly-report/
+    
+    Manual trigger — testing ke liye ya on-demand.
+    Production mein Celery Beat automatically chalayega.
+    """
+    # Sirf us patient ke caregivers ke liye
+    caregivers = Caregiver.objects.filter(
+        patient=request.user,
+        is_active=True,
+        email__isnull=False,
+    ).exclude(email='')
+ 
+    if not caregivers.exists():
+        return Response(
+            {'message': 'Koi caregiver email registered nahi hai.'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+ 
+    # Background mein chalao
+    send_weekly_caregiver_report.delay()
+ 
+    return Response({
+        'message': f'{caregivers.count()} caregiver(s) ko report bheja ja raha hai.',
+    })

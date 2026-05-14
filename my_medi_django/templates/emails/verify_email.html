@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Verify your email</title>
+  </head>
+
+  <body style="margin:0;padding:0;background-color:#f4f6fb;">
+    <!-- Preheader (hidden preview text) -->
+    <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">
+      Verify your email to activate your {{ app_name }} account.
+    </div>
+
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#f4f6fb;">
+      <tr>
+        <td align="center" style="padding:28px 12px;">
+          <!-- Container -->
+          <table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0"
+                 style="width:600px;max-width:600px;background:#ffffff;border-radius:14px;overflow:hidden;border:1px solid #e9edf5;">
+            <!-- Header -->
+            <tr>
+              <td style="padding:22px 24px;background:#0b5fff;">
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                  <tr>
+                    <td align="left" style="color:#ffffff;font-family:Arial,Helvetica,sans-serif;">
+                      <div style="font-size:18px;font-weight:700;letter-spacing:0.2px;">
+                        {{ app_name }}
+                      </div>
+                      <div style="font-size:12px;opacity:0.9;margin-top:4px;">
+                        Medicine reminders • Tracking • Insights
+                      </div>
+                    </td>
+                    <td align="right" style="color:#ffffff;font-family:Arial,Helvetica,sans-serif;font-size:12px;opacity:0.9;">
+                      Email Verification
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+
+            <!-- Body -->
+            <tr>
+              <td style="padding:24px 24px 10px 24px;font-family:Arial,Helvetica,sans-serif;color:#111827;">
+                <div style="font-size:18px;font-weight:700;margin:0 0 10px 0;">
+                  Verify your email
+                </div>
+
+                <div style="font-size:14px;line-height:1.7;color:#374151;margin:0 0 14px 0;">
+                  Hi <b>{{ username }}</b>,<br />
+                  Thanks for creating your <b>{{ app_name }}</b> account. Please confirm your email address to activate your account.
+                </div>
+
+                <!-- Button -->
+                <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:16px 0 18px 0;">
+                  <tr>
+                    <td align="center" bgcolor="#0b5fff" style="border-radius:10px;">
+                      <a href="{{ verify_url }}"
+                         style="display:inline-block;padding:12px 18px;font-family:Arial,Helvetica,sans-serif;font-size:14px;
+                                color:#ffffff;text-decoration:none;font-weight:700;">
+                        Verify Email
+                      </a>
+                    </td>
+                  </tr>
+                </table>
+
+                <div style="font-size:12px;line-height:1.6;color:#6b7280;margin:0 0 8px 0;">
+                  If the button doesn’t work, copy and paste this link into your browser:
+                </div>
+
+                <div style="font-size:12px;line-height:1.6;color:#0b5fff;word-break:break-all;margin:0 0 14px 0;">
+                  {{ verify_url }}
+                </div>
+
+                <div style="font-size:12px;line-height:1.6;color:#6b7280;margin:0 0 6px 0;">
+                  For your security: If you didn’t create this account, you can ignore this email.
+                </div>
+              </td>
+            </tr>
+
+            <!-- Divider -->
+            <tr>
+              <td style="padding:0 24px;">
+                <div style="height:1px;background:#eef2f7;"></div>
+              </td>
+            </tr>
+
+            <!-- Footer -->
+            <tr>
+              <td style="padding:14px 24px 22px 24px;font-family:Arial,Helvetica,sans-serif;color:#6b7280;">
+                <div style="font-size:12px;line-height:1.6;">
+                  Need help? Contact us at
+                  <a href="mailto:{{ support_email }}" style="color:#0b5fff;text-decoration:none;">{{ support_email }}</a>
+                </div>
+                <div style="font-size:12px;line-height:1.6;margin-top:6px;">
+                  © {{ year }} {{ app_name }}. All rights reserved.
+                </div>
+              </td>
+            </tr>
+          </table>
+
+          <!-- Small outer footer -->
+          <div style="max-width:600px;font-family:Arial,Helvetica,sans-serif;font-size:11px;line-height:1.6;color:#9ca3af;padding:14px 6px 0 6px;">
+            You’re receiving this email because you signed up for {{ app_name }}.
+          </div>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>

@@ -1,0 +1,25 @@
+.env
+.env.*
+# Env
+.env
+.env.*
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Local DB
+db.sqlite3
+*.sqlite3
+
+# Virtualenv
+venv/
+.venv/
+
+# Media / uploads
+media/
+
+# OS
+.DS_Store

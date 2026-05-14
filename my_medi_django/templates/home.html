@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>MY_medi Dashboard</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; }
+        h1 { color: #333; }
+        table { border-collapse: collapse; width: 100%; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+    </style>
+</head>
+<body>
+    <h1>Good Morning, {{ user.username }}!</h1>
+    <h2>Your Medicines</h2>
+    {% if medicines %}
+        <table>
+            <tr>
+                <th>Name</th>
+                <th>Dosage</th>
+                <th>Frequency</th>
+                <th>Notes</th>
+                <th>Created</th>
+            </tr>
+            {% for med in medicines %}
+            <tr>
+                <td>{{ med.name }}</td>
+                <td>{{ med.dosage }}</td>
+                <td>{{ med.frequency }}</td>
+                <td>{{ med.notes|default:"-" }}</td>
+                <td>{{ med.created_at|date:"Y-m-d H:i" }}</td>
+            </tr>
+            {% endfor %}
+        </table>
+    {% else %}
+        <p>No medicines added yet.</p>
+    {% endif %}
+    <p><a href="/admin/logout/">Logout</a></p>
+</body>
+</html>
+

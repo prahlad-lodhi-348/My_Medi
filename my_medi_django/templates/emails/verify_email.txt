@@ -1,0 +1,9 @@
+Verify your email for {{ app_name }}
+
+Hi {{ username }},
+Thanks for signing up. Please verify your email by clicking the link below:
+
+{{ verify_url }}
+
+If you didn’t create this account, ignore this email.
+© {{ year }} {{ app_name }}

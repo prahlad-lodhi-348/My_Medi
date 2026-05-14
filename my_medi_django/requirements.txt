@@ -1,0 +1,25 @@
+# Core Django app
+Django>=4.2,<7
+djangorestframework>=3.14
+djangorestframework-simplejwt>=5.3
+djangorestframework-authtoken>=2.1
+
+# CORS
+django-cors-headers>=4.3
+
+# DB
+psycopg2-binary>=2.9
+
+# Celery + broker
+celery>=5.3
+redis>=5.0
+
+# Time/task scheduling (optional but common for beat)
+django-celery-beat>=2.6
+
+# Settings helper
+python-decouple>=3.8
+
+# HTTP
+requests>=2.31
+

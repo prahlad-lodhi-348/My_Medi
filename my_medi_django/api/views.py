@@ -1,25 +1,37 @@
 from django.contrib.auth import get_user_model
-from .serializers import ResendVerificationSerializer
+from django.shortcuts import redirect, render
+from django.conf import settings
+
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.authtoken.models import Token
 from rest_framework.authentication import TokenAuthentication
 from rest_framework.permissions import IsAuthenticated, AllowAny
-from django.contrib.auth import authenticate
-from django.shortcuts import render, redirect
-from .serializers import RegisterSerializer, LoginSerializer, ProfileSerializer, MedicineSerializer
-from .models import User, Medicine, Profile
-from .utils import send_verification_email
-from django.urls import reverse
-from django.conf import settings
-import google.generativeai as genai
-import json
-import base64
 from rest_framework.parsers import MultiPartParser, FormParser
-from PIL import Image
+from django.contrib.auth import authenticate
+
+import json
 import io
-from urllib.parse import urlencode
+from PIL import Image
+import google.generativeai as genai
+
+from .serializers import (
+    RegisterSerializer, LoginSerializer, ProfileSerializer,
+    MedicineSerializer, ResendVerificationSerializer
+)
+from .models import User, Medicine, Profile, Regimen, Stock, IntakeLog
+from .utils import send_verification_email
+from decimal import Decimal
+
+UserModel = get_user_model()
+
+
+def home(request):
+    if not request.user.is_authenticated:
+        return redirect('/admin/login/')
+    medicines = Medicine.objects.filter(user=request.user)
+    return render(request, 'home.html', {'user': request.user, 'medicines': medicines})
 
 
 class RegisterView(APIView):
@@ -47,37 +59,22 @@ class VerifyEmailView(APIView):
         except User.DoesNotExist:
             return Response({'error': 'Invalid or already used token.'}, status=status.HTTP_400_BAD_REQUEST)
 
+
 class VerifyEmailWebView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request, token):
-        success = False
+        context = {}
         try:
             user = User.objects.get(email_verification_token=token, is_email_verified=False)
             user.is_email_verified = True
             user.email_verification_token = None
             user.save()
-            success = True
+            context = {'success': True, 'user': user}
         except User.DoesNotExist:
-            success = False
+            context = {'success': False, 'error': 'Invalid or already used token.'}
+        return render(request, 'email_verified.html', context)
 
-        # अगर आपके पास web frontend URL है तो redirect कर दो
-        frontend_base = getattr(settings, "FRONTEND_BASE_URL", "").strip()
-        if frontend_base:
-            params = urlencode({"verified": "1" if success else "0"})
-            return redirect(f"{frontend_base}/signin?{params}")
-
-        # वरना simple HTML page दिखा दो (no frontend)
-        if success:
-            return HttpResponse(
-                "<h2>Email verified ✅</h2><p>Now you can go back to the app and sign in.</p>",
-                content_type="text/html",
-            )
-        return HttpResponse(
-            "<h2>Invalid / expired link</h2><p>Please request a new verification email.</p>",
-            content_type="text/html",
-            status=400,
-        )
 
 class LoginView(APIView):
     permission_classes = [AllowAny]
@@ -85,35 +82,21 @@ class LoginView(APIView):
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-
         email = serializer.validated_data["email"].strip()
         password = serializer.validated_data["password"]
 
-        # Step 1: email se user dhundo
         try:
             user_obj = User.objects.get(email__iexact=email)
         except User.DoesNotExist:
-            return Response(
-                {"error": "Invalid credentials"},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return Response({"error": "Invalid credentials"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Step 2: Django authenticate (username chahiye internally)
         user = authenticate(username=user_obj.username, password=password)
         if not user:
-            return Response(
-                {"error": "Invalid credentials"},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return Response({"error": "Invalid credentials"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Step 3: Email verified check
         if not user.is_email_verified:
-            return Response(
-                {"error": "Email not verified."},
-                status=status.HTTP_403_FORBIDDEN
-            )
+            return Response({"error": "Email not verified."}, status=status.HTTP_403_FORBIDDEN)
 
-        # Step 4: Token do
         token, _ = Token.objects.get_or_create(user=user)
         return Response({
             "token": token.key,
@@ -121,16 +104,25 @@ class LoginView(APIView):
             "email": user.email,
             "is_email_verified": True
         }, status=status.HTTP_200_OK)
-    
+
 
 class ProfileView(APIView):
     authentication_classes = [TokenAuthentication]
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        profile, created = Profile.objects.get_or_create(user=request.user)
+        profile, _ = Profile.objects.get_or_create(user=request.user)
         serializer = ProfileSerializer(profile)
         return Response(serializer.data)
+
+    def patch(self, request):
+        profile, _ = Profile.objects.get_or_create(user=request.user)
+        serializer = ProfileSerializer(profile, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
 
 class AnalyzeMedicineView(APIView):
     authentication_classes = [TokenAuthentication]
@@ -142,38 +134,35 @@ class AnalyzeMedicineView(APIView):
         image_file = request.FILES.get('image')
 
         genai.configure(api_key=settings.GEMINI_API_KEY)
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-2.5-flash')
 
-        prompt = """You are a medicine analysis expert. Analyze this medicine/image and respond with ONLY valid JSON parsable by json.loads(). Use exactly these keys: {"how_it_works": "2 simple sentences", "side_effects": "bullet points as string", "safety_advice": "safety precautions as string"}. No other text, explanations, or markdown."""
-
-        if image_file:
-            image = Image.open(io.BytesIO(image_file.read()))
-            response = model.generate_content([prompt, image])
-        else:
-            response = model.generate_content(prompt + "\n\nMedicine info: " + text_input)
-
-        def extract_clean_json(text):
-            import re
-            # Extract JSON from ```json ... ```
-            json_match = re.search(r'```json\s*(\{.*?\})\s*```', text, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(1)
-            else:
-                json_str = re.sub(r'^.*?(\{.*\}).*?$', r'\1', text, flags=re.DOTALL).strip()
-            try:
-                return json.loads(json_str)
-            except:
-                raise ValueError("Invalid JSON")
+        prompt = """You are a medicine analysis expert. Analyze this medicine/image and respond with ONLY valid JSON. Use exactly these keys: {"how_it_works": "2 simple sentences", "side_effects": "bullet points as string", "safety_advice": "safety precautions as string"}. No other text."""
 
         try:
+            if image_file:
+                image = Image.open(io.BytesIO(image_file.read()))
+                response = model.generate_content([prompt, image])
+            else:
+                response = model.generate_content(prompt + "\n\nMedicine info: " + text_input)
+
+            def extract_clean_json(text):
+                import re
+                json_match = re.search(r'```json\s*(\{.*?\})\s*```', text, re.DOTALL)
+                if json_match:
+                    json_str = json_match.group(1)
+                else:
+                    json_str = re.sub(r'^.*?(\{.*\}).*?$', r'\1', text, flags=re.DOTALL).strip()
+                return json.loads(json_str)
+
             ai_data = extract_clean_json(response.text)
             return Response({
                 'how_it_works': ai_data.get('how_it_works', 'Information not available'),
                 'side_effects': ai_data.get('side_effects', 'Information not available'),
                 'safety_advice': ai_data.get('safety_advice', 'Information not available')
             })
-        except ValueError:
-            return Response({'error': 'AI analysis failed - invalid JSON format', 'raw': response.text}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+        except Exception as e:
+            return Response({'error': 'AI analysis failed', 'details': str(e)[:100]}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+
 
 class MedicineListCreateView(APIView):
     authentication_classes = [TokenAuthentication]
@@ -187,35 +176,48 @@ class MedicineListCreateView(APIView):
 
     def post(self, request):
         name = request.data.get('name')
-        dosage = request.data.get('dosage')
-        frequency = request.data.get('frequency')
-        notes = request.data.get('notes', '')
+        if not name:
+            return Response({'error': 'name is required'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        dosage = request.data.get('dosage') or None
+        frequency = request.data.get('frequency') or None
+        notes = request.data.get('notes', '') or ''
         image_file = request.FILES.get('image')
 
-        # AI Analysis if image provided
         working_mechanism = 'Information not available'
         side_effects = 'Information not available'
+        
         if image_file:
-            genai.configure(api_key=settings.GEMINI_API_KEY)
-            model = genai.GenerativeModel('gemini-1.5-flash')
-            image = genai.upload_file(image_file)
-            prompt = """Identify this medicine and provide: 1. How it works (simple 2 sentences), 2. Potential side effects (bullet points), 3. Safety precautions. Format it as clean JSON."""
-            response = model.generate_content([prompt, image])
             try:
-                ai_data = json.loads(response.text)
-                working_mechanism = ai_data.get('how_it_works', 'Information not available')
-                side_effects = ai_data.get('side_effects', 'Information not available')
+                genai.configure(api_key=settings.GEMINI_API_KEY)
+                model = genai.GenerativeModel('gemini-2.5-flash')
+                image = genai.upload_file(image_file)
+                prompt = """Identify this medicine: 1. How it works, 2. Side effects, 3. Safety. Format as clean JSON."""
+                response = model.generate_content([prompt, image])
+                try:
+                    ai_data = json.loads(response.text)
+                    working_mechanism = ai_data.get('how_it_works', 'Information not available')
+                    side_effects = ai_data.get('side_effects', 'Information not available')
+                except:
+                    pass
             except:
                 pass
 
         medicine, created = Medicine.objects.get_or_create(
             user=request.user,
             name=name,
-            defaults={'dosage': dosage, 'frequency': frequency, 'notes': notes, 'working_mechanism': working_mechanism, 'side_effects': side_effects}
+            defaults={
+                'dosage': dosage,
+                'frequency': frequency,
+                'notes': notes,
+                'working_mechanism': working_mechanism,
+                'side_effects': side_effects
+            }
         )
 
         serializer = MedicineSerializer(medicine)
         return Response(serializer.data, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
 
 class ReminderSpeechView(APIView):
     authentication_classes = [TokenAuthentication]
@@ -228,6 +230,7 @@ class ReminderSpeechView(APIView):
             return Response({'speech': message})
         except Medicine.DoesNotExist:
             return Response({'error': 'Medicine not found'}, status=status.HTTP_404_NOT_FOUND)
+
 
 class AIInsightsView(APIView):
     authentication_classes = [TokenAuthentication]
@@ -242,59 +245,76 @@ class AIInsightsView(APIView):
             'medicines': [{'name': m.name, 'dosage': m.dosage, 'frequency': m.frequency, 'side_effects': m.side_effects} for m in medicines]
         }
         genai.configure(api_key=settings.GEMINI_API_KEY)
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        prompt = f"Generate ONE personalized health tip based on recent health data (steps: {data['step_count']}, water: {data['water_intake']}ml) and these medications: {json.dumps(data['medicines'])}. Keep concise, actionable, 1 sentence."
+        model = genai.GenerativeModel('gemini-2.5-flash')
+        prompt = f"Generate ONE health tip. Steps: {data['step_count']}, Water: {data['water_intake']}ml, Meds: {json.dumps(data['medicines'])}. 1 sentence."
         response = model.generate_content(prompt)
-        tip = response.text.strip()
-        return Response({'tip': tip})
+        return Response({'tip': response.text.strip()})
+
 
 class AIChatView(APIView):
     authentication_classes = [TokenAuthentication]
     permission_classes = [IsAuthenticated]
 
+    def _build_medication_context(self, user):
+        regimens = Regimen.objects.filter(user=user, is_active=True).select_related('medicine', 'stock')
+        medications = []
+        
+        for regimen in regimens:
+            medicine = regimen.medicine
+            dose_times = regimen.dose_times.all().order_by('time')
+            doses = [{'time': str(dt.time), 'quantity': float(dt.quantity), 'unit': dt.unit, 'days': dt.days_of_week or []} for dt in dose_times]
+            
+            medication = {'name': medicine.name, 'strength': medicine.strength, 'form': medicine.form, 'doses': doses}
+            
+            try:
+                stock = regimen.stock
+                medication['stock'] = {'current_quantity': float(stock.current_quantity), 'unit': stock.unit, 'low_stock_threshold_days': stock.low_stock_threshold_days}
+            except Stock.DoesNotExist:
+                pass
+            
+            from django.utils import timezone
+            today = timezone.now().date()
+            recent_intakes = IntakeLog.objects.filter(regimen=regimen, date=today).values('status').distinct()
+            
+            if recent_intakes.exists():
+                medication['today_status'] = [intake['status'] for intake in recent_intakes]
+            
+            medications.append(medication)
+        
+        return {'medications': medications}
+
     def post(self, request):
         message = request.data.get('message')
         if not message:
             return Response({'error': 'Message is required'}, status=status.HTTP_400_BAD_REQUEST)
-        
+
         genai.configure(api_key=settings.GEMINI_API_KEY)
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        
-        prompt = """\nYou are a helpful medical AI assistant.\nProvide safe, general health guidance.\nDo NOT provide diagnosis.\nSuggest consulting a doctor if symptoms are serious.\n\nUser question: {}""".format(message)
-        
+        model = genai.GenerativeModel('gemini-2.5-flash')
+
+        medication_context = self._build_medication_context(request.user)
+        medication_data = json.dumps(medication_context, indent=2)
+
+        system_prompt = f"""You are a helpful medical AI assistant. Provide safe, general health guidance. Do NOT provide diagnosis. Suggest consulting a doctor if serious.
+
+User's Medications:
+{medication_data}
+
+Use the above medication information when relevant."""
+
+        prompt = f"User question: {message}"
+
         try:
-            response = model.generate_content(prompt)
-            ai_text = response.text.strip()
-            return Response({'response': ai_text})
-        except Exception:
-            return Response(
-                {'error': 'AI service unavailable'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            response = model.generate_content([system_prompt, prompt])
+            return Response({'response': response.text.strip()})
+        except Exception as e:
+            error_msg = str(e)
+            if '429' in error_msg or 'quota' in error_msg.lower() or 'ResourceExhausted' in error_msg:
+                return Response(
+                    {'error': 'AI quota exceeded. Please check your Google AI Studio billing and usage limits.'},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE
+                )
+            return Response({'error': f'AI service unavailable: {error_msg[:100]}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-
-def register(request):
-    serializer = YourSerializer(data=request.data)
-    
-    if serializer.is_valid():
-        serializer.save()
-        return Response({"msg": "User created"})
-    
-    print(serializer.errors)   # 👈 terminal me error dikhega
-    return Response(serializer.errors, status=400)
-
-
-def home(request):
-    if not request.user.is_authenticated:
-        return redirect('/admin/login/')
-    medicines = Medicine.objects.filter(user=request.user)
-    return render(request, 'home.html', {'user': request.user, 'medicines': medicines})
-
-
-
-
-
-UserModel = get_user_model()
 
 class ResendVerificationView(APIView):
     permission_classes = [AllowAny]
@@ -302,7 +322,6 @@ class ResendVerificationView(APIView):
     def post(self, request):
         serializer = ResendVerificationSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-
         email = serializer.validated_data["email"].strip()
 
         try:
@@ -312,10 +331,7 @@ class ResendVerificationView(APIView):
         except UserModel.DoesNotExist:
             pass
 
-        return Response(
-            {"message": "If this email is registered and not verified, a verification link has been sent."},
-            status=status.HTTP_200_OK
-        )
+        return Response({"message": "If this email is registered and not verified, a verification link has been sent."}, status=status.HTTP_200_OK)
 
 
 class LogoutView(APIView):

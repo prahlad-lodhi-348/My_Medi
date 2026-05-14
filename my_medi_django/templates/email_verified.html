@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Email Verified — MyMedi</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Helvetica Neue', sans-serif;
+            background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .card {
+            background: #ffffff;
+            border-radius: 20px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.08);
+            max-width: 420px;
+            width: 100%;
+            padding: 48px 32px;
+            text-align: center;
+            animation: slideUp 0.7s ease-out;
+        }
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        .icon {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 24px;
+            font-size: 36px;
+        }
+        .icon.success {
+            background: #e8f5e9;
+            color: #2e7d32;
+        }
+        .icon.error {
+            background: #ffebee;
+            color: #c62828;
+        }
+        h1 {
+            font-size: 24px;
+            font-weight: 700;
+            color: #1b1b1b;
+            margin-bottom: 12px;
+        }
+        p {
+            font-size: 15px;
+            color: #555;
+            line-height: 1.6;
+            margin-bottom: 8px;
+        }
+        .detail {
+            font-weight: 600;
+            color: #2e7d32;
+        }
+        .divider {
+            height: 1px;
+            background: #e0e0e0;
+            margin: 20px 0;
+        }
+        .countdown {
+            font-size: 13px;
+            color: #888;
+            margin-top: 16px;
+        }
+        .btn {
+            display: inline-block;
+            margin-top: 24px;
+            padding: 14px 32px;
+            background: #2e7d32;
+            color: #fff;
+            text-decoration: none;
+            border-radius: 50px;
+            font-weight: 600;
+            font-size: 14px;
+            transition: background 0.3s ease;
+        }
+        .btn:hover {
+            background: #1b5e20;
+        }
+        @media (max-width: 480px) {
+            .card {
+                padding: 36px 24px;
+            }
+            h1 {
+                font-size: 20px;
+            }
+        }
+    </style>
+    {% if success %}
+    <meta http-equiv="refresh" content="3;url=my_medi://verified">
+    {% endif %}
+</head>
+<body>
+    <div class="card">
+        {% if success %}
+        <div class="icon success">&#10003;</div>
+        <h1>Email Verified Successfully</h1>
+        <p>Welcome, <span class="detail">{{ user.username }}</span></p>
+        <p>Your email address <span class="detail">{{ user.email }}</span> has been confirmed.</p>
+        <div class="divider"></div>
+        <p class="countdown">Redirecting to the MyMedi app in 3 seconds...</p>
+        <a href="my_medi://verified" class="btn">Open MyMedi App</a>
+        {% else %}
+        <div class="icon error">&#10007;</div>
+        <h1>Verification Failed</h1>
+        <p>{{ error|default:"This verification link is invalid or has already been used." }}</p>
+        <div class="divider"></div>
+        <p class="countdown">Please request a new verification email from the app.</p>
+        {% endif %}
+    </div>
+</body>
+</html>
+
